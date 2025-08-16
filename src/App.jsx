@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
-import Cropper from "react-easy-crop";
-import { getCroppedImg } from "./cropUtils";
+import Cropper from "react-cropper";
+import 'react-cropper/node_modules/cropperjs/dist/cropper.css';
 import { Upload, Camera } from "lucide-react";
 import * as tf from "@tensorflow/tfjs";
 window.tf = tf;
@@ -9,11 +9,9 @@ function App() {
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const cropperRef = useRef(null);
 
   const [src, setSrc] = useState(null);
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
   const [croppedBlob, setCroppedBlob] = useState(null);
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
@@ -23,6 +21,7 @@ function App() {
   const [modelB, setModelB] = useState(null);
   const [selectedModel, setSelectedModel] = useState("A");
   const [classLabels, setClassLabels] = useState([]);
+  const [useRearCamera, setUseRearCamera] = useState(true);
 
   useEffect(() => {
     tf.loadGraphModel("/modelA/model.json").then(setModelA);
@@ -44,16 +43,17 @@ function App() {
     setPreview(url);
   };
 
-  const onCropComplete = (_, pixelCrop) => {
-    setCroppedAreaPixels(pixelCrop);
-  };
-
   const confirmCrop = async () => {
-    const blob = await getCroppedImg(src, croppedAreaPixels);
-    const previewUrl = URL.createObjectURL(blob);
-    setCroppedBlob(blob);
-    setPreview(previewUrl);
-    setSrc(null);
+    if (cropperRef.current) {
+      const cropper = cropperRef.current.cropper;
+      cropper.getCroppedCanvas().toBlob((blob) => {
+        if (!blob) return;
+        const previewUrl = URL.createObjectURL(blob);
+        setCroppedBlob(blob);
+        setPreview(previewUrl);
+        setSrc(null); // hide cropper
+      }, "image/jpeg");
+    }
   };
 
   const preprocessInput = (img) => {
@@ -63,10 +63,8 @@ function App() {
       .toFloat();
 
     if (selectedModel === "B") {
-      // ResNet50 (Model B): BGR with mean subtraction
       return base.reverse(-1).sub([103.939, 116.779, 123.68]).expandDims(0);
     } else {
-      // MobileNetV2 (Model A): normalize to [0, 1]
       return base.div(255.0).expandDims(0);
     }
   };
@@ -82,7 +80,6 @@ function App() {
     setResult(null);
 
     const img = await blobToImage(imageToUpload);
-
     const tensor = preprocessInput(img);
 
     try {
@@ -92,14 +89,13 @@ function App() {
         : predictionsTensor;
 
       const predictions = output.dataSync();
-
       const topIndex = predictions.indexOf(Math.max(...predictions));
       const confidence = predictions[topIndex];
+      const label = classLabels[topIndex] || `Class ${topIndex}`;
 
-      if (confidence < 0.5) {
-        setResult({ id: "Not recognized", confidence });
+      if (label === "Unknown" || confidence < 0.5) {
+        setResult({ id: "Not recognized", confidence: null });
       } else {
-        const label = classLabels[topIndex] || `Class ${topIndex}`;
         setResult({ id: label, confidence });
       }
 
@@ -116,11 +112,23 @@ function App() {
   const triggerFile = () => fileInputRef.current.click();
 
   const startCamera = async () => {
-    setCameraOpen(true);
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play();
+    try {
+      setCameraOpen(true);
+      const constraints = {
+        video: {
+          facingMode: useRearCamera ? { ideal: "environment" } : "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch (err) {
+      console.error("Error accessing camera:", err);
+      setCameraOpen(false);
     }
   };
 
@@ -169,6 +177,7 @@ function App() {
           🐄 Cattle Identifier
         </h1>
 
+        {/* Model Selector */}
         <div className="mb-6">
           <label
             htmlFor="model-select"
@@ -186,22 +195,11 @@ function App() {
               <option value="A">MobileNetV2</option>
               <option value="B">ResNet50</option>
             </select>
-            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-zinc-400">
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M19 9l-7 7-7-7" />
-              </svg>
-            </div>
           </div>
         </div>
 
+        {/* Upload / Camera Buttons */}
         <div className="flex flex-col sm:flex-row justify-center gap-4 mb-6">
-
           <button
             onClick={triggerFile}
             className="flex items-center gap-2 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 rounded-full"
@@ -223,6 +221,7 @@ function App() {
           </button>
         </div>
 
+        {/* Camera View */}
         {cameraOpen && (
           <div className="mb-4">
             <video ref={videoRef} className="w-full rounded-xl mb-2" />
@@ -239,22 +238,36 @@ function App() {
               >
                 Cancel
               </button>
+              <button
+                onClick={() => {
+                  setUseRearCamera((prev) => !prev);
+                  cancelCamera();
+                  startCamera();
+                }}
+                className="px-4 py-2 bg-zinc-200 rounded-xl hover:bg-zinc-300"
+              >
+                Switch Camera
+              </button>
             </div>
             <canvas ref={canvasRef} className="hidden" />
           </div>
         )}
 
+        {/* Cropper */}
         {src && (
           <>
             <div className="relative w-full h-64 mb-4 bg-zinc-100 rounded-xl overflow-hidden">
               <Cropper
-                image={src}
-                crop={crop}
-                zoom={zoom}
-                aspect={9 / 16}
-                onCropChange={setCrop}
-                onZoomChange={setZoom}
-                onCropComplete={onCropComplete}
+                src={src}
+                style={{ height: "100%", width: "100%" }}
+                ref={cropperRef}
+                aspectRatio={NaN} // Free crop
+                guides={true}
+                viewMode={1}
+                dragMode="move"
+                background={false}
+                responsive={true}
+                checkOrientation={false}
               />
             </div>
             <div className="flex justify-center gap-4 mb-4">
@@ -278,6 +291,7 @@ function App() {
           </>
         )}
 
+        {/* Preview */}
         {preview && !src && (
           <img
             src={preview}
@@ -286,6 +300,7 @@ function App() {
           />
         )}
 
+        {/* Upload & Identify */}
         <button
           onClick={handleUpload}
           disabled={!preview || loading}
@@ -298,6 +313,7 @@ function App() {
           {loading ? "Identifying..." : "Upload & Identify"}
         </button>
 
+        {/* Result */}
         {result && (
           <div className="mt-6 bg-white/50 backdrop-blur-sm border border-white/30 rounded-xl p-4 shadow-inner">
             <p className="text-sm text-zinc-600 mb-1">Prediction</p>
@@ -308,9 +324,11 @@ function App() {
                 <p className="text-lg font-semibold text-zinc-900">
                   ID: {result.id}
                 </p>
-                <p className="text-sm text-zinc-700">
-                  Confidence: {(result.confidence * 100).toFixed(1)}%
-                </p>
+                {result.confidence !== null && (
+                  <p className="text-sm text-zinc-700">
+                    Confidence: {(result.confidence * 100).toFixed(1)}%
+                  </p>
+                )}
               </>
             )}
           </div>
