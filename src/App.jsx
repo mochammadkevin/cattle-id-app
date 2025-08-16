@@ -195,6 +195,17 @@ function App() {
               <option value="A">MobileNetV2</option>
               <option value="B">ResNet50</option>
             </select>
+            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-zinc-400">
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
           </div>
         </div>
 
