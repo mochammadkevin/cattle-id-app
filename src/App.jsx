@@ -93,7 +93,7 @@ function App() {
       const confidence = predictions[topIndex];
       const label = classLabels[topIndex] || `Class ${topIndex}`;
 
-      if (label === "Unknown" || confidence < 0.5) {
+      if (label === "Unknown" || confidence < 0.75) {
         setResult({ id: "Not recognized", confidence: null });
       } else {
         setResult({ id: label, confidence });
