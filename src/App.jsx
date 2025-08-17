@@ -311,7 +311,7 @@ function App() {
           />
         )}
 
-        {/* Upload & Identify */}
+        {/* Identify */}
         <button
           onClick={handleUpload}
           disabled={!preview || loading}
@@ -321,7 +321,7 @@ function App() {
               : "bg-blue-600 hover:bg-blue-700 active:scale-95"
           }`}
         >
-          {loading ? "Identifying..." : "Upload & Identify"}
+          {loading ? "Identifying..." : "Identify"}
         </button>
 
         {/* Result */}
