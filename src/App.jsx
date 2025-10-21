@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import Cropper from "react-cropper";
-import 'react-cropper/node_modules/cropperjs/dist/cropper.css';
+import "react-cropper/node_modules/cropperjs/dist/cropper.css";
 import { Upload, Camera } from "lucide-react";
 import * as tf from "@tensorflow/tfjs";
 window.tf = tf;
@@ -22,10 +22,42 @@ function App() {
   const [selectedModel, setSelectedModel] = useState("A");
   const [classLabels, setClassLabels] = useState([]);
   const [useRearCamera, setUseRearCamera] = useState(true);
+  const [benchmark, setBenchmark] = useState(null);
+  const [modelSizes, setModelSizes] = useState({ A: null, B: null });
+
+  const getModelSize = async (path) => {
+    let totalBytes = 0;
+    try {
+      const res = await fetch(path + "/model.json");
+      const json = await res.json();
+      const manifest = json.weightsManifest || [];
+      const jsonSize = parseInt(res.headers.get("Content-Length") || "0", 10);
+      totalBytes += isNaN(jsonSize) ? JSON.stringify(json).length : jsonSize;
+      for (const group of manifest) {
+        for (const f of group.paths) {
+          const binRes = await fetch(path + "/" + f);
+          const binSize = parseInt(binRes.headers.get("Content-Length") || "0", 10);
+          totalBytes += isNaN(binSize) ? (await binRes.arrayBuffer()).byteLength : binSize;
+        }
+      }
+    } catch (err) {
+      console.error("Error measuring model size:", err);
+    }
+    return totalBytes;
+  };
 
   useEffect(() => {
-    tf.loadGraphModel("/modelA/model.json").then(setModelA);
-    tf.loadGraphModel("/modelB/model.json").then(setModelB);
+    (async () => {
+      const mA = await tf.loadGraphModel("/modelA/model.json");
+      const sizeA = await getModelSize("/modelA");
+      setModelA(mA);
+      setModelSizes((prev) => ({ ...prev, A: (sizeA / (1024 * 1024)).toFixed(2) }));
+
+      const mB = await tf.loadGraphModel("/modelB/model.json");
+      const sizeB = await getModelSize("/modelB");
+      setModelB(mB);
+      setModelSizes((prev) => ({ ...prev, B: (sizeB / (1024 * 1024)).toFixed(2) }));
+    })();
   }, []);
 
   useEffect(() => {
@@ -51,7 +83,7 @@ function App() {
         const previewUrl = URL.createObjectURL(blob);
         setCroppedBlob(blob);
         setPreview(previewUrl);
-        setSrc(null); // hide cropper
+        setSrc(null); 
       }, "image/jpeg");
     }
   };
@@ -63,10 +95,25 @@ function App() {
       .toFloat();
 
     if (selectedModel === "B") {
+
       return base.reverse(-1).sub([103.939, 116.779, 123.68]).expandDims(0);
     } else {
+
       return base.div(255.0).expandDims(0);
     }
+  };
+
+  const benchmarkModel = async (model, tensor, trials = 5) => {
+    let total = 0;
+    for (let i = 0; i < trials; i++) {
+      const t0 = performance.now();
+      const pred = await model.executeAsync(tensor);
+      await pred.data();
+      const t1 = performance.now();
+      total += t1 - t0;
+      pred.dispose();
+    }
+    return total / trials;
   };
 
   const handleUpload = async () => {
@@ -78,12 +125,23 @@ function App() {
 
     setLoading(true);
     setResult(null);
+    setBenchmark(null);
 
     const img = await blobToImage(imageToUpload);
     const tensor = preprocessInput(img);
 
     try {
+      const memBefore = tf.memory().numBytes;
+
+      const t0 = performance.now();
       const predictionsTensor = await model.executeAsync(tensor);
+      await predictionsTensor.data();
+      const t1 = performance.now();
+
+      const memAfter = tf.memory().numBytes;
+
+      const avgInference = await benchmarkModel(model, tensor, 5);
+
       const output = Array.isArray(predictionsTensor)
         ? predictionsTensor[0]
         : predictionsTensor;
@@ -93,11 +151,20 @@ function App() {
       const confidence = predictions[topIndex];
       const label = classLabels[topIndex] || `Class ${topIndex}`;
 
-      if (label === "Unknown" || confidence < 0.75) {
+      if (label === "Unknown" || confidence < 0.85) {
         setResult({ id: "Not recognized", confidence: null });
       } else {
         setResult({ id: label, confidence });
       }
+
+      setBenchmark({
+        modelName: selectedModel === "A" ? "MobileNetV2" : "ResNet50",
+        singleInference: (t1 - t0).toFixed(2),
+        avgInference: avgInference.toFixed(2),
+        memoryDelta: ((memAfter - memBefore) / 1024).toFixed(1),
+        activeTensors: tf.memory().numTensors,
+        modelSize: selectedModel === "A" ? modelSizes.A : modelSizes.B,
+      });
 
       output.dispose();
       tensor.dispose();
@@ -342,6 +409,21 @@ function App() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* Benchmark Result */}
+        {benchmark && (
+          <div className="mt-4 bg-white/60 backdrop-blur-md border border-white/30 rounded-xl p-4 shadow-inner text-sm text-zinc-800">
+            <p className="font-semibold mb-2">⚡ Benchmark</p>
+            <ul className="space-y-1">
+              <li>Model: {benchmark.modelName}</li>
+              <li>Model Size: {benchmark.modelSize} MB</li>
+              <li>Single Inference: {benchmark.singleInference} ms</li>
+              <li>Avg Inference (5x): {benchmark.avgInference} ms</li>
+              <li>Memory Delta: {benchmark.memoryDelta} KB</li>
+              <li>Active Tensors: {benchmark.activeTensors}</li>
+            </ul>
           </div>
         )}
       </div>
