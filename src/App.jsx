@@ -151,7 +151,7 @@ function App() {
       const confidence = predictions[topIndex];
       const label = classLabels[topIndex] || `Class ${topIndex}`;
 
-      if (label === "Unknown" || confidence < 0.85) {
+      if (label === "Unknown" || confidence < 0.5) {
         setResult({ id: "Not recognized", confidence: null });
       } else {
         setResult({ id: label, confidence });
@@ -409,21 +409,6 @@ function App() {
                 )}
               </>
             )}
-          </div>
-        )}
-
-        {/* Benchmark Result */}
-        {benchmark && (
-          <div className="mt-4 bg-white/60 backdrop-blur-md border border-white/30 rounded-xl p-4 shadow-inner text-sm text-zinc-800">
-            <p className="font-semibold mb-2">⚡ Benchmark</p>
-            <ul className="space-y-1">
-              <li>Model: {benchmark.modelName}</li>
-              <li>Model Size: {benchmark.modelSize} MB</li>
-              <li>Single Inference: {benchmark.singleInference} ms</li>
-              <li>Avg Inference (5x): {benchmark.avgInference} ms</li>
-              <li>Memory Delta: {benchmark.memoryDelta} KB</li>
-              <li>Active Tensors: {benchmark.activeTensors}</li>
-            </ul>
           </div>
         )}
       </div>
